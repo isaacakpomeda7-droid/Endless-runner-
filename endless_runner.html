@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Endless Runner</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    font-family: Arial, sans-serif; background: #111827; color: white;
+    touch-action: manipulation;
+  }
+  body { display:flex; align-items:center; justify-content:center; }
+  #gameWrap {
+    position: relative; width: min(100vw, 520px); height: min(100vh, 820px);
+    background: linear-gradient(#67c9ff 0%, #bfeaff 58%, #82c341 58%, #82c341 100%);
+    overflow: hidden;
+  }
+  canvas { display:block; width:100%; height:100%; }
+  .screen {
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    background:rgba(10,20,40,.76); padding:24px;
+  }
+  .hidden { display:none !important; }
+  h1 { margin:0 0 8px; font-size:42px; }
+  p { margin:6px 0 20px; color:#dbeafe; }
+  button {
+    border:0; border-radius:16px; padding:16px 28px; font-size:20px;
+    font-weight:800; background:#facc15; color:#111827; box-shadow:0 5px 0 #ca8a04;
+  }
+  button:active { transform:translateY(4px); box-shadow:0 1px 0 #ca8a04; }
+  #jumpBtn {
+    position:absolute; right:18px; bottom:18px; z-index:5;
+    width:112px; height:64px; padding:0; font-size:18px;
+  }
+  #hud {
+    position:absolute; top:12px; left:12px; right:12px; z-index:4;
+    display:flex; justify-content:space-between; font-weight:800;
+    text-shadow:0 2px 3px #0008; pointer-events:none;
+  }
+  .badge { background:#0007; border-radius:12px; padding:8px 12px; }
+  #tip { font-size:14px; margin-top:12px; color:#dbeafe; }
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div class="badge">Score: <span id="score">0</span></div>
+    <div class="badge">Coins: <span id="coins">0</span></div>
+  </div>
+
+  <button id="jumpBtn" class="hidden">JUMP</button>
+
+  <div id="startScreen" class="screen">
+    <h1>🏃 Endless Runner</h1>
+    <p>Jump over obstacles and collect coins!</p>
+    <button id="startBtn">START GAME</button>
+    <div id="tip">Tap the screen or JUMP to leap.</div>
+  </div>
+
+  <div id="gameOverScreen" class="screen hidden">
+    <h1>Game Over</h1>
+    <p>Your score: <strong id="finalScore">0</strong></p>
+    <button id="restartBtn">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('gameWrap');
+
+  const startScreen = document.getElementById('startScreen');
+  const gameOverScreen = document.getElementById('gameOverScreen');
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const jumpBtn = document.getElementById('jumpBtn');
+  const hud = document.getElementById('hud');
+  const scoreEl = document.getElementById('score');
+  const coinsEl = document.getElementById('coins');
+  const finalScoreEl = document.getElementById('finalScore');
+
+  let W = 360, H = 640, groundY = 520;
+  let running = false, last = 0, score = 0, coins = 0;
+  let speed = 260, spawnTimer = 0, coinTimer = 0;
+  let obstacles = [], coinItems = [];
+  let player = { x: 65, y: 0, w: 38, h: 48, vy: 0, onGround: true };
+
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height; groundY = H * 0.78;
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!running) player.y = groundY - player.h;
+  }
+  window.addEventListener('resize', resize);
+
+  function reset() {
+    score = 0; coins = 0; speed = 260;
+    spawnTimer = 0.7; coinTimer = 0.9;
+    obstacles = []; coinItems = [];
+    player.x = Math.max(35, W * 0.16);
+    player.y = groundY - player.h;
+    player.vy = 0; player.onGround = true;
+    updateHud();
+  }
+
+  function updateHud() {
+    scoreEl.textContent = Math.floor(score);
+    coinsEl.textContent = coins;
+  }
+
+  function jump() {
+    if (!running) return;
+    if (player.onGround) {
+      player.vy = -650;
+      player.onGround = false;
+    }
+  }
+
+  function startGame() {
+    reset();
+    running = true;
+    startScreen.classList.add('hidden');
+    gameOverScreen.classList.add('hidden');
+    hud.classList.remove('hidden');
+    jumpBtn.classList.remove('hidden');
+    last = performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  function gameOver() {
+    running = false;
+    finalScoreEl.textContent = Math.floor(score);
+    gameOverScreen.classList.remove('hidden');
+    jumpBtn.classList.add('hidden');
+  }
+
+  function spawnObstacle() {
+    const h = 35 + Math.random() * 35;
+    const w = 25 + Math.random() * 25;
+    obstacles.push({ x: W + 20, y: groundY - h, w, h });
+  }
+
+  function spawnCoin() {
+    coinItems.push({
+      x: W + 20, y: groundY - 80 - Math.random() * 100,
+      r: 10, got:false
+    });
+  }
+
+  function hit(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x &&
+           a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function update(dt) {
+    score += dt * 10;
+    speed += dt * 2.2;
+
+    player.vy += 1500 * dt;
+    player.y += player.vy * dt;
+    if (player.y >= groundY - player.h) {
+      player.y = groundY - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnObstacle();
+      spawnTimer = Math.max(0.62, 1.15 - speed / 1800) + Math.random() * 0.55;
+    }
+
+    coinTimer -= dt;
+    if (coinTimer <= 0) {
+      spawnCoin();
+      coinTimer = 0.8 + Math.random() * 1.0;
+    }
+
+    obstacles.forEach(o => o.x -= speed * dt);
+    coinItems.forEach(c => c.x -= speed * dt);
+
+    obstacles = obstacles.filter(o => o.x + o.w > -20);
+    coinItems = coinItems.filter(c => c.x + c.r > -20 && !c.got);
+
+    const pbox = {x:player.x+5, y:player.y+5, w:player.w-10, h:player.h-8};
+    for (const o of obstacles) {
+      if (hit(pbox, o)) { gameOver(); return; }
+    }
+
+    for (const c of coinItems) {
+      const dx = (player.x + player.w/2) - c.x;
+      const dy = (player.y + player.h/2) - c.y;
+      if (Math.hypot(dx,dy) < c.r + 24) {
+        c.got = true; coins++; score += 25;
+      }
+    }
+    updateHud();
+  }
+
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+
+    // sky
+    ctx.fillStyle = '#67c9ff';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#ffffff88';
+    ctx.beginPath(); ctx.arc(W*0.78,H*0.16,34,0,Math.PI*2); ctx.fill();
+
+    // clouds
+    ctx.fillStyle = '#ffffffaa';
+    for (const [x,y,s] of [[W*.18,H*.2,1],[W*.58,H*.29,.8],[W*.9,H*.12,.65]]) {
+      ctx.beginPath();
+      ctx.arc(x,y,20*s,0,Math.PI*2);
+      ctx.arc(x+22*s,y+3,15*s,0,Math.PI*2);
+      ctx.arc(x-20*s,y+5,14*s,0,Math.PI*2);
+      ctx.fill();
+    }
+
+    // ground
+    ctx.fillStyle = '#82c341';
+    ctx.fillRect(0,groundY,W,H-groundY);
+    ctx.fillStyle = '#5d9b2d';
+    ctx.fillRect(0,groundY,W,8);
+
+    // road stripes
+    ctx.fillStyle = '#6daa35';
+    const offset = -(performance.now()/5 % 50);
+    for(let x=offset;x<W;x+=50) ctx.fillRect(x,groundY+35,28,6);
+
+    // coins
+    for (const c of coinItems) {
+      ctx.fillStyle = '#ffd43b';
+      ctx.beginPath(); ctx.arc(c.x,c.y,c.r,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff3a3';
+      ctx.beginPath(); ctx.arc(c.x-3,c.y-3,3,0,Math.PI*2); ctx.fill();
+    }
+
+    // obstacles
+    for (const o of obstacles) {
+      ctx.fillStyle = '#e05252';
+      ctx.fillRect(o.x,o.y,o.w,o.h);
+      ctx.fillStyle = '#b93636';
+      ctx.fillRect(o.x+5,o.y+5,o.w-10,8);
+    }
+
+    // player
+    ctx.fillStyle = '#2563eb';
+    ctx.fillRect(player.x,player.y,player.w,player.h);
+    ctx.fillStyle = '#f6c28b';
+    ctx.beginPath(); ctx.arc(player.x+player.w/2,player.y-5,14,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(player.x+24,player.y-9,4,4);
+  }
+
+  function loop(now) {
+    if (!running) { draw(); return; }
+    const dt = Math.min((now-last)/1000, 0.033);
+    last = now;
+    update(dt);
+    draw();
+    if (running) requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener('click', startGame);
+  restartBtn.addEventListener('click', startGame);
+  jumpBtn.addEventListener('click', (e) => { e.stopPropagation(); jump(); });
+  canvas.addEventListener('pointerdown', jump);
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      jump();
+    }
+  });
+
+  resize();
+  draw();
+})();
+</script>
+</body>
+</html>
